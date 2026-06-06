@@ -4,9 +4,9 @@ const fetch = require('node-fetch');
 const HF_API_KEY      = process.env.HF_API_KEY;
 const QDRANT_URL      = process.env.QDRANT_URL || 'https://a63b45c1-4f63-4df0-b0e9-99dc40f100c3.sa-east-1-0.aws.cloud.qdrant.io:6333';
 const QDRANT_API_KEY  = process.env.QDRANT_API_KEY;
-const HF_EMBED_MODEL  = 'nomic-ai/nomic-embed-text-v1';
+const HF_EMBED_MODEL  = 'sentence-transformers/all-MiniLM-L6-v2';
 const COLLECTION_NAME = 'baseBarba';
-const VECTOR_SIZE     = 768;
+const VECTOR_SIZE     = 384; // all-MiniLM-L6-v2 produce 384 dimensiones
 
 if (!HF_API_KEY || !QDRANT_API_KEY) {
   console.error('❌ Falta HF_API_KEY o QDRANT_API_KEY en .env');
@@ -95,9 +95,7 @@ async function upsertPoints(points) {
 
 async function seed() {
   console.log('\n🌱 Cargando base de conocimiento en Qdrant Cloud...\n');
-
   await createCollection();
-
   const points = [];
   for (let i = 0; i < knowledge.length; i++) {
     const item = knowledge[i];
@@ -106,7 +104,6 @@ async function seed() {
     points.push({ id: i + 1, vector, payload: { text: item.text, source_id: item.id } });
     console.log(' ✓');
   }
-
   await upsertPoints(points);
   console.log(`\n🔥 ¡Listo! ${points.length} chunks cargados en Qdrant Cloud.\n`);
 }

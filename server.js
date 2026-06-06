@@ -14,15 +14,14 @@ const QDRANT_URL      = process.env.QDRANT_URL || 'https://a63b45c1-4f63-4df0-b0
 const QDRANT_API_KEY  = process.env.QDRANT_API_KEY;
 
 const GROQ_MODEL      = 'llama-3.1-8b-instant';
-const HF_EMBED_MODEL  = 'nomic-ai/nomic-embed-text-v1';
+const HF_EMBED_MODEL  = 'sentence-transformers/all-MiniLM-L6-v2';
 const COLLECTION_NAME = 'baseBarba';
 const TOP_K           = 4;
 // ──────────────────────────────────────────────────────────
 
-// Validar variables de entorno al arrancar
 const required = { GROQ_API_KEY, HF_API_KEY, QDRANT_API_KEY };
 for (const [key, val] of Object.entries(required)) {
-  if (!val) { console.error(`❌ Falta ${key} en .env`); process.exit(1); }
+  if (!val) { console.error(`❌ Falta ${key} en variables de entorno`); process.exit(1); }
 }
 
 const qdrantHeaders = {
@@ -30,7 +29,6 @@ const qdrantHeaders = {
   'api-key': QDRANT_API_KEY
 };
 
-// ── Embedding con Hugging Face Inference API ──────────────
 async function getEmbedding(text) {
   const res = await fetch(
     `https://router.huggingface.co/hf-inference/models/${HF_EMBED_MODEL}/pipeline/feature-extraction`,
@@ -48,11 +46,9 @@ async function getEmbedding(text) {
     throw new Error(`HuggingFace embedding error ${res.status}: ${err}`);
   }
   const data = await res.json();
-  // La API devuelve [[...vector...]] — aplanamos
   return Array.isArray(data[0]) ? data[0] : data;
 }
 
-// ── Búsqueda en Qdrant Cloud ──────────────────────────────
 async function searchQdrant(vector) {
   const res = await fetch(
     `${QDRANT_URL}/collections/${COLLECTION_NAME}/points/search`,
@@ -70,7 +66,6 @@ async function searchQdrant(vector) {
   return data.result || [];
 }
 
-// ── Chat con Groq (streaming) ─────────────────────────────
 async function chatWithGroq(question, context, res) {
   const systemPrompt = `Sos el asistente virtual de Barba Ahumada, una charcutería artesanal argentina especializada en ahumados con leñas frutales.
 Tu tono es cálido, apasionado por la gastronomía y profesional.
@@ -105,7 +100,6 @@ ${context}`;
     throw new Error(`Groq error ${groqRes.status}: ${err}`);
   }
 
-  // Streaming SSE hacia el browser
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -114,8 +108,7 @@ ${context}`;
   for await (const chunk of groqRes.body) {
     buffer += chunk.toString();
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // guardar línea incompleta
-
+    buffer = lines.pop();
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
       const data = line.slice(6).trim();
@@ -127,47 +120,34 @@ ${context}`;
       try {
         const json = JSON.parse(data);
         const token = json.choices?.[0]?.delta?.content;
-        if (token) {
-          res.write(`data: ${JSON.stringify({ token })}\n\n`);
-        }
+        if (token) res.write(`data: ${JSON.stringify({ token })}\n\n`);
       } catch (_) {}
     }
   }
   res.end();
 }
 
-// ─── ENDPOINT PRINCIPAL ───────────────────────────────────
 app.post('/chat', async (req, res) => {
   const { question } = req.body;
-  if (!question?.trim()) {
-    return res.status(400).json({ error: 'Pregunta vacía.' });
-  }
-
+  if (!question?.trim()) return res.status(400).json({ error: 'Pregunta vacía.' });
   try {
     const vector  = await getEmbedding(question);
     const hits    = await searchQdrant(vector);
-    const context = hits
-      .map(h => h.payload?.text || '')
-      .filter(Boolean)
-      .join('\n\n---\n\n');
-
+    const context = hits.map(h => h.payload?.text || '').filter(Boolean).join('\n\n---\n\n');
     await chatWithGroq(question, context || 'Sin contexto disponible.', res);
   } catch (err) {
     console.error('Error en /chat:', err.message);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Error interno del servidor.' });
-    }
+    if (!res.headersSent) res.status(500).json({ error: 'Error interno del servidor.' });
   }
 });
 
-// ─── HEALTH CHECK ─────────────────────────────────────────
 app.get('/health', (_, res) => res.json({
   status: 'ok',
   model: GROQ_MODEL,
+  embed: HF_EMBED_MODEL,
   collection: COLLECTION_NAME
 }));
 
-// ─── START ────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`\n🔥 Barba Ahumada Chat Backend — puerto ${PORT}`);
